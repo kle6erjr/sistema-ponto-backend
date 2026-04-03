@@ -10,11 +10,45 @@ const { PrismaClient } = pkg;
 const app = express();
 const prisma = new PrismaClient();
 
-app.use(cors());
+// 🔧 CORS CONFIGURADO PARA PRODUÇÃO E DESENVOLVIMENTO
+app.use(cors({
+  origin: [
+    'http://localhost:5173',           // Frontend Ponto (local)
+    'http://localhost:5174',           // Frontend Admin (local)
+    'https://sistema-ponto-frontend.vercel.app',  // Frontend Ponto (produção)
+    'https://sistema-ponto-admin.vercel.app'      // Frontend Admin (produção)
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
 const PORT = 3000;
 const SECRET = "segredo_super_secreto";
+
+/* =========================
+   ROTA RAIZ (TESTE)
+========================= */
+app.get("/", (req, res) => {
+  res.json({
+    mensagem: "API do Sistema de Ponto está rodando!",
+    rotas: [
+      "POST /login",
+      "POST /funcionarios",
+      "GET /funcionarios",
+      "GET /funcionarios/:id",
+      "PUT /funcionarios/:id",
+      "DELETE /funcionarios/:id",
+      "POST /registros",
+      "GET /registros/dia",
+      "GET /registros",
+      "GET /registros/filtro",
+      "GET /dashboard/estatisticas"
+    ]
+  });
+});
 
 /* =========================
    MIDDLEWARE AUTENTICAÇÃO
@@ -137,6 +171,120 @@ app.get("/funcionarios", autenticarToken, autorizarAdmin, async (req, res) => {
     res.json(funcionarios);
   } catch (error) {
     res.status(500).json({ erro: "Erro ao buscar funcionários" });
+  }
+});
+
+/* =========================
+   BUSCAR FUNCIONÁRIO POR ID (ADMIN)
+========================= */
+app.get("/funcionarios/:id", autenticarToken, autorizarAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const funcionario = await prisma.funcionario.findUnique({
+      where: { id: parseInt(id) },
+    });
+    
+    if (!funcionario) {
+      return res.status(404).json({ erro: "Funcionário não encontrado" });
+    }
+    
+    // Remove a senha por segurança
+    const { senha, ...funcionarioSemSenha } = funcionario;
+    res.json(funcionarioSemSenha);
+    
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ erro: "Erro ao buscar funcionário" });
+  }
+});
+
+/* =========================
+   ATUALIZAR FUNCIONÁRIO (ADMIN)
+========================= */
+app.put("/funcionarios/:id", autenticarToken, autorizarAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nome, matricula, cargo, senha, tipo } = req.body;
+    
+    // Verifica se funcionário existe
+    const funcionarioExistente = await prisma.funcionario.findUnique({
+      where: { id: parseInt(id) },
+    });
+    
+    if (!funcionarioExistente) {
+      return res.status(404).json({ erro: "Funcionário não encontrado" });
+    }
+    
+    // Prepara dados para atualização
+    const dadosAtualizacao = {
+      nome,
+      matricula,
+      cargo,
+      tipo,
+    };
+    
+    // Se senha foi fornecida, criptografa
+    if (senha && senha.trim() !== "") {
+      dadosAtualizacao.senha = await bcrypt.hash(senha, 10);
+    }
+    
+    const funcionarioAtualizado = await prisma.funcionario.update({
+      where: { id: parseInt(id) },
+      data: dadosAtualizacao,
+    });
+    
+    // Remove senha da resposta
+    const { senha: _, ...funcionarioSemSenha } = funcionarioAtualizado;
+    res.json(funcionarioSemSenha);
+    
+  } catch (error) {
+    console.error(error);
+    
+    if (error.code === "P2002") {
+      return res.status(400).json({ erro: "Matrícula já cadastrada" });
+    }
+    
+    res.status(500).json({ erro: "Erro ao atualizar funcionário" });
+  }
+});
+
+/* =========================
+   EXCLUIR FUNCIONÁRIO (ADMIN)
+========================= */
+app.delete("/funcionarios/:id", autenticarToken, autorizarAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Verifica se funcionário existe
+    const funcionario = await prisma.funcionario.findUnique({
+      where: { id: parseInt(id) },
+    });
+    
+    if (!funcionario) {
+      return res.status(404).json({ erro: "Funcionário não encontrado" });
+    }
+    
+    // Não permite excluir o próprio admin logado
+    if (funcionario.id === req.user.id) {
+      return res.status(400).json({ erro: "Não é possível excluir seu próprio usuário" });
+    }
+    
+    // Exclui registros de ponto do funcionário primeiro
+    await prisma.registro.deleteMany({
+      where: { funcionarioId: parseInt(id) },
+    });
+    
+    // Exclui o funcionário
+    await prisma.funcionario.delete({
+      where: { id: parseInt(id) },
+    });
+    
+    res.json({ mensagem: "Funcionário excluído com sucesso" });
+    
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ erro: "Erro ao excluir funcionário" });
   }
 });
 
@@ -318,6 +466,7 @@ app.get("/registros", autenticarToken, autorizarAdmin, async (req, res) => {
     res.status(500).json({ erro: "Erro ao listar registros" });
   }
 });
+
 /* =========================
    LISTAR REGISTROS COM FILTRO (ADMIN)
 ========================= */
@@ -369,119 +518,7 @@ app.get("/registros/filtro", autenticarToken, autorizarAdmin, async (req, res) =
     res.status(500).json({ erro: "Erro ao listar registros com filtro" });
   }
 });
-/* =========================
-   BUSCAR FUNCIONÁRIO POR ID (ADMIN)
-========================= */
-app.get("/funcionarios/:id", autenticarToken, autorizarAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const funcionario = await prisma.funcionario.findUnique({
-      where: { id: parseInt(id) },
-    });
-    
-    if (!funcionario) {
-      return res.status(404).json({ erro: "Funcionário não encontrado" });
-    }
-    
-    // Remove a senha por segurança
-    const { senha, ...funcionarioSemSenha } = funcionario;
-    res.json(funcionarioSemSenha);
-    
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ erro: "Erro ao buscar funcionário" });
-  }
-});
 
-/* =========================
-   ATUALIZAR FUNCIONÁRIO (ADMIN)
-========================= */
-app.put("/funcionarios/:id", autenticarToken, autorizarAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { nome, matricula, cargo, senha, tipo } = req.body;
-    
-    // Verifica se funcionário existe
-    const funcionarioExistente = await prisma.funcionario.findUnique({
-      where: { id: parseInt(id) },
-    });
-    
-    if (!funcionarioExistente) {
-      return res.status(404).json({ erro: "Funcionário não encontrado" });
-    }
-    
-    // Prepara dados para atualização
-    const dadosAtualizacao = {
-      nome,
-      matricula,
-      cargo,
-      tipo,
-    };
-    
-    // Se senha foi fornecida, criptografa
-    if (senha && senha.trim() !== "") {
-      dadosAtualizacao.senha = await bcrypt.hash(senha, 10);
-    }
-    
-    const funcionarioAtualizado = await prisma.funcionario.update({
-      where: { id: parseInt(id) },
-      data: dadosAtualizacao,
-    });
-    
-    // Remove senha da resposta
-    const { senha: _, ...funcionarioSemSenha } = funcionarioAtualizado;
-    res.json(funcionarioSemSenha);
-    
-  } catch (error) {
-    console.error(error);
-    
-    if (error.code === "P2002") {
-      return res.status(400).json({ erro: "Matrícula já cadastrada" });
-    }
-    
-    res.status(500).json({ erro: "Erro ao atualizar funcionário" });
-  }
-});
-
-/* =========================
-   EXCLUIR FUNCIONÁRIO (ADMIN)
-========================= */
-app.delete("/funcionarios/:id", autenticarToken, autorizarAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Verifica se funcionário existe
-    const funcionario = await prisma.funcionario.findUnique({
-      where: { id: parseInt(id) },
-    });
-    
-    if (!funcionario) {
-      return res.status(404).json({ erro: "Funcionário não encontrado" });
-    }
-    
-    // Não permite excluir o próprio admin logado
-    if (funcionario.id === req.user.id) {
-      return res.status(400).json({ erro: "Não é possível excluir seu próprio usuário" });
-    }
-    
-    // Exclui registros de ponto do funcionário primeiro
-    await prisma.registro.deleteMany({
-      where: { funcionarioId: parseInt(id) },
-    });
-    
-    // Exclui o funcionário
-    await prisma.funcionario.delete({
-      where: { id: parseInt(id) },
-    });
-    
-    res.json({ mensagem: "Funcionário excluído com sucesso" });
-    
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ erro: "Erro ao excluir funcionário" });
-  }
-});
 /* =========================
    ESTATÍSTICAS DO DASHBOARD (ADMIN)
 ========================= */
