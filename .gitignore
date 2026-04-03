@@ -1,0 +1,23 @@
+# Dependências
+node_modules/
+package-lock.json
+
+# Variáveis de ambiente (senhas!)
+.env
+.env.local
+
+# Arquivos do Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# Logs
+*.log
+npm-debug.log*
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
+
+# Arquivos de build
+dist/
+build/
